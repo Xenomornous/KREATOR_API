@@ -1,0 +1,21 @@
+@echo off
+set datetime=%date% %time%
+echo ----------
+echo FRONTEND...
+echo ----------
+cd /d C:\Users\User\Desktop\dev\KREATOR\kreator_front
+git add .
+git commit -m "update %datetime%"
+git push
+echo -----------------------------------------------
+
+echo ----------
+echo BACKEND...
+echo ----------
+cd /d C:\Users\User\Desktop\dev\KREATOR\Kreator_API
+git add .
+git commit -m "update %datetime%"
+git push
+echo -----------------------------------------------
+echo DONE
+pause
