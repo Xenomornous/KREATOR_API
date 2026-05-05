@@ -5,25 +5,25 @@ using Kreator_API.Models;
 namespace Kreator_API.Controllers
 {
     [ApiController]
-    [Route("api/lessonStructure")]
-    public class LessonsStructureController : ControllerBase
+    [Route("api/lectures")]
+    public class LecturesController : ControllerBase
     {
         private readonly IConfiguration _config;
 
-        public LessonsStructureController(IConfiguration config)
+        public LecturesController(IConfiguration config)
         {
             _config = config;
         }
 
-
-        [HttpGet("{userId}/{moduleId}")]
-        public async Task<IActionResult> GetLessons(string userId, string moduleId)
+        [HttpGet("{userId}/{moduleId}/{lessonId}")]
+        public async Task<IActionResult> GetLectures(string userId, string moduleId, string lessonId)
         {
-            Console.WriteLine("========== LESSONS STRUCTURE DEBUG ==========");
+            Console.WriteLine("========== LECTURES DEBUG ==========");
             Console.WriteLine($"userId = {userId}");
             Console.WriteLine($"moduleId = {moduleId}");
+            Console.WriteLine($"lessonId = {lessonId}");
 
-            var lessons = new List<Lesson_structure>();
+            var lectures = new List<Lecture>();
 
             try
             {
@@ -34,23 +34,27 @@ namespace Kreator_API.Controllers
                 Console.WriteLine("DB CONNECTED OK");
 
                 var cmd = new NpgsqlCommand(@"
-            SELECT 
-                id,
-                user_id,
-                module_id,
-                module_name,
-                lesson_id,
-                lesson_name,
-                role,
-                mod_user,
-                mod_date
-            FROM lessons
-            WHERE user_id = @userId
-            AND module_id = @moduleId
-        ", conn);
+                    SELECT 
+                        id,
+                        user_id,
+                        module_id,
+                        module_name,
+                        lesson_id,
+                        lesson_name,
+                        lecture_id,
+                        lecture_name,
+                        role,
+                        mod_user,
+                        mod_date
+                    FROM lectures
+                    WHERE user_id = @userId
+                    AND module_id = @moduleId
+                    AND lesson_id = @lessonId
+                ", conn);
 
                 cmd.Parameters.AddWithValue("userId", userId);
                 cmd.Parameters.AddWithValue("moduleId", moduleId);
+                cmd.Parameters.AddWithValue("lessonId", lessonId);
 
                 Console.WriteLine("QUERY EXECUTED");
 
@@ -63,9 +67,7 @@ namespace Kreator_API.Controllers
 
                 while (await reader.ReadAsync())
                 {
-                    Console.WriteLine("ROW FOUND");
-
-                    var lesson = new Lesson_structure
+                    var lecture = new Lecture
                     {
                         Id = Convert.ToInt32(reader["id"]),
                         User_Id = reader["user_id"].ToString(),
@@ -73,20 +75,24 @@ namespace Kreator_API.Controllers
                         Module_Name = reader["module_name"].ToString(),
                         Lesson_Id = reader["lesson_id"].ToString(),
                         Lesson_Name = reader["lesson_name"].ToString(),
+
+                        Lecture_Id = reader["lecture_id"].ToString(),
+                        Lecture_Name = reader["lecture_name"].ToString(),
+
                         Role = reader["role"].ToString(),
                         Mod_User = reader["mod_user"].ToString(),
                         Mod_Date = Convert.ToDateTime(reader["mod_date"])
                     };
 
-                    Console.WriteLine($"Lesson: {lesson.Lesson_Name}");
+                    Console.WriteLine($"Lecture: {lecture.Lecture_Name}");
 
-                    lessons.Add(lesson);
+                    lectures.Add(lecture);
                 }
 
-                Console.WriteLine($"TOTAL LESSONS: {lessons.Count}");
+                Console.WriteLine($"TOTAL LECTURES: {lectures.Count}");
                 Console.WriteLine("===================================");
 
-                return Ok(lessons);
+                return Ok(lectures);
             }
             catch (Exception ex)
             {
