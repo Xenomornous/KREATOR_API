@@ -1,11 +1,12 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Kreator_API.Models;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
-using Kreator_API.Models;
 
 namespace Kreator_API.Controllers;
 
@@ -24,6 +25,8 @@ public class LoginController : ControllerBase
     public async Task<IActionResult> Login(
         [FromBody] auth_Login dto)
     {
+
+        Console.WriteLine("LOGIN CONTROLLER HIT");
         try
         {
             // VALIDATION
@@ -116,6 +119,9 @@ public class LoginController : ControllerBase
 
             string username =
                 reader["username"].ToString()!;
+            Console.WriteLine(
+            $"USERNAME FROM DB: {username}"
+            );
 
             string passwordHash =
                 reader["password_hash"].ToString()!;
@@ -171,7 +177,7 @@ public class LoginController : ControllerBase
                 ),
 
                 new Claim(
-                    ClaimTypes.Name,
+                    "username",
                     username
                 ),
 
@@ -219,6 +225,11 @@ public class LoginController : ControllerBase
                 new JwtSecurityTokenHandler()
                     .WriteToken(token);
 
+            // REFRESH TOKEN
+
+            string refreshToken =
+                GenerateRefreshToken();
+
             // COOKIE
 
             Response.Cookies.Append(
@@ -229,10 +240,10 @@ public class LoginController : ControllerBase
                     HttpOnly = true,
 
                     // PROD => true
-                    Secure = false,
+                    Secure = true,
 
                     SameSite =
-                        SameSiteMode.Strict,
+                        SameSiteMode.None,
 
                     Path = "/",
 
@@ -242,9 +253,75 @@ public class LoginController : ControllerBase
                 }
             );
 
+            // SAVE REFRESH TOKEN
+
+            var refreshCmd =
+                new NpgsqlCommand(
+                    @"
+        INSERT INTO refresh_tokens
+        (
+            user_id,
+            token,
+            expires_at
+        )
+        VALUES
+        (
+            @user_id,
+            @token,
+            @expires_at
+        )
+        ",
+                    conn
+                );
+
+            refreshCmd.Parameters.AddWithValue(
+                "user_id",
+                Guid.Parse(userId)
+            );
+
+            refreshCmd.Parameters.AddWithValue(
+                "token",
+                refreshToken
+            );
+
+            refreshCmd.Parameters.AddWithValue(
+                "expires_at",
+                DateTime.UtcNow.AddDays(30)
+            );
+
             // CLOSE READER
 
             await reader.CloseAsync();
+
+            Console.WriteLine("READER CLOSED");
+
+            // SAVE REFRESH TOKEN
+            await refreshCmd.ExecuteNonQueryAsync();
+
+            Console.WriteLine("REFRESH SAVED");
+
+            // REFRESH COOKIE
+
+            Console.WriteLine("CREATING REFRESH COOKIE");
+            Response.Cookies.Append(
+                "refreshToken",
+                refreshToken,
+                new CookieOptions
+                {
+                    HttpOnly = true,
+
+                    Secure = true,
+
+                    SameSite =
+                        SameSiteMode.None,
+
+                    Path = "/",
+
+                    Expires =
+                        DateTime.UtcNow
+                            .AddDays(30)
+                }
+            );
 
             // UPDATE LAST LOGIN
 
@@ -282,16 +359,35 @@ public class LoginController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex);
+            Console.WriteLine(
+                "LOGIN ERROR:"
+            );
+
+            Console.WriteLine(ex.ToString());
 
             return StatusCode(
                 500,
                 new
                 {
                     message =
-                        "Internal server error"
+                        ex.Message
                 }
             );
         }
     }
+    private string GenerateRefreshToken()
+    {
+        var randomBytes =
+            new byte[64];
+
+        using var rng =
+            RandomNumberGenerator.Create();
+
+        rng.GetBytes(randomBytes);
+
+        return Convert.ToBase64String(
+            randomBytes
+        );
+    }
 }
+

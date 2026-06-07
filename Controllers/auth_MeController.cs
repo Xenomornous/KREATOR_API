@@ -13,6 +13,12 @@ public class auth_MeController : ControllerBase
     [HttpGet("me")]
     public IActionResult Me()
     {
+        foreach (var claim in User.Claims)
+        {
+            Console.WriteLine(
+                $"{claim.Type} = {claim.Value}"
+            );
+        }
         try
         {
             // =========================
@@ -31,7 +37,7 @@ public class auth_MeController : ControllerBase
 
             string? username =
                 User.FindFirst(
-                    ClaimTypes.Name
+                    "username"
                 )?.Value;
 
             string? role =

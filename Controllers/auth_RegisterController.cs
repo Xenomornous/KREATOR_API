@@ -1,6 +1,4 @@
-﻿// Controllers/AuthController.cs
-
-using BCrypt.Net;
+﻿using BCrypt.Net;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
@@ -176,7 +174,7 @@ public class RegisterController : ControllerBase
                 conn
             );
 
-            // 🔥 SQL INJECTION SAFE
+            // SQL INJECTION SAFE
             checkCmd.Parameters.AddWithValue(
                 "email",
                 email
@@ -234,7 +232,7 @@ public class RegisterController : ControllerBase
                 conn
             );
 
-            // 🔥 SQL INJECTION SAFE
+            // SQL INJECTION SAFE
             insertCmd.Parameters.AddWithValue(
                 "email",
                 email
