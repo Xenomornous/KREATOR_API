@@ -1,10 +1,56 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Resend;
+using Kreator_API.Services;
+using AspNetCoreRateLimit;
+using Kreator_API.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+builder.Services.AddHttpClient();
+
+builder.Services.AddMemoryCache();
+
+builder.Services.Configure<
+    IpRateLimitOptions
+>(
+    builder.Configuration.GetSection(
+        "IpRateLimiting"
+    )
+);
+
+builder.Services
+    .AddInMemoryRateLimiting();
+
+builder.Services.AddSingleton<
+    IRateLimitConfiguration,
+    RateLimitConfiguration
+>();
+
+// email
+builder.Services.Configure<ResendClientOptions>(
+    options =>
+    {
+        options.ApiToken =
+            builder.Configuration[
+                "Resend:ApiKey"
+            ]!;
+    }
+);
+
+builder.Services.AddTransient<IResend, ResendClient>();
+
+builder.Services.AddScoped<
+    EmailService
+>();
+
+builder.Services.AddHostedService<
+    DeleteUnverifiedUsersService
+>();
+
 builder.Services.AddOpenApi();
 
 // JWT AUTH
@@ -74,7 +120,12 @@ app.UseHttpsRedirection();
 
 app.UseCors("AllowAll");
 
-// 🔥 AUTH
+app.UseIpRateLimiting();
+
+//  AUTH
+app.UseMiddleware<
+    CsrfMiddleware
+>();
 app.UseAuthentication();
 
 app.UseAuthorization();

@@ -84,7 +84,8 @@ public class LoginController : ControllerBase
                     username,
                     password_hash,
                     role,
-                    is_active
+                    is_active,
+                    is_email_verified
                 FROM users
                 WHERE email = @email
                 LIMIT 1
@@ -134,6 +135,11 @@ public class LoginController : ControllerBase
                     reader["is_active"]
                 );
 
+            bool isEmailVerified =
+                Convert.ToBoolean(
+                    reader["is_email_verified"]
+                );
+
             // ACCOUNT ACTIVE
 
             if (!isActive)
@@ -142,6 +148,16 @@ public class LoginController : ControllerBase
                 {
                     message =
                         "Konto zostało zablokowane"
+                });
+            }
+
+            // Check email verification
+            if (!isEmailVerified)
+            {
+                return Unauthorized(new
+                {
+                    message =
+                        "Zweryfikuj adres email przed zalogowaniem"
                 });
             }
 
@@ -216,7 +232,7 @@ public class LoginController : ControllerBase
 
                     expires:
                         DateTime.UtcNow
-                            .AddMinutes(15),
+                            .AddHours(12),
 
                     signingCredentials: creds
                 );

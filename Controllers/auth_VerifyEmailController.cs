@@ -1,54 +1,43 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
 using Npgsql;
+using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Security.Cryptography;
 using System.Text;
-
+using System.Security.Cryptography;
 namespace Kreator_API.Controllers;
 
 [ApiController]
 [Route("api/auth")]
-public class auth_RefreshController : ControllerBase
+public class auth_VerifyEmailController
+    : ControllerBase
 {
     private readonly IConfiguration _config;
 
-    public auth_RefreshController(
+    public auth_VerifyEmailController(
         IConfiguration config
     )
     {
         _config = config;
     }
 
-    [HttpPost("refresh")]
-    public async Task<IActionResult> Refresh()
+    [HttpGet("verify-email")]
+    public async Task<IActionResult> VerifyEmail(
+        [FromQuery] string token
+    )
     {
         try
         {
-            // =========================
-            // GET REFRESH TOKEN COOKIE
-            // =========================
-
-            var refreshToken =
-                Request.Cookies["refreshToken"];
-
             if (
-                string.IsNullOrWhiteSpace(
-                    refreshToken
-                )
+                string.IsNullOrWhiteSpace(token)
             )
             {
-                return Unauthorized(new
+                return BadRequest(new
                 {
                     message =
-                        "Brak refresh token"
+                        "Brak tokena"
                 });
             }
-
-            // =========================
-            // DATABASE
-            // =========================
 
             await using var conn =
                 new NpgsqlConnection(
@@ -60,22 +49,17 @@ public class auth_RefreshController : ControllerBase
             await conn.OpenAsync();
 
             // =========================
-            // GET TOKEN FROM DB
+            // GET TOKEN
             // =========================
 
             var cmd = new NpgsqlCommand(
                 @"
                 SELECT
-                    rt.user_id,
-                    rt.expires_at,
-                    rt.revoked,
-                    u.email,
-                    u.username,
-                    u.role
-                FROM refresh_tokens rt
-                JOIN users u
-                    ON u.id = rt.user_id
-                WHERE rt.token = @token
+                    user_id,
+                    expires_at,
+                    used
+                FROM email_verification_tokens
+                WHERE token = @token
                 LIMIT 1
                 ",
                 conn
@@ -83,24 +67,26 @@ public class auth_RefreshController : ControllerBase
 
             cmd.Parameters.AddWithValue(
                 "token",
-                refreshToken
+                token
+            );
+
+            Console.WriteLine(
+            $"TOKEN FROM URL: {token}"
             );
 
             await using var reader =
                 await cmd.ExecuteReaderAsync();
 
+
+
             if (!await reader.ReadAsync())
             {
-                return Unauthorized(new
+                return BadRequest(new
                 {
                     message =
-                        "Niepoprawny refresh token"
+                        "Niepoprawny token"
                 });
             }
-
-            // =========================
-            // GET DATA
-            // =========================
 
             string userId =
                 reader["user_id"].ToString()!;
@@ -110,64 +96,120 @@ public class auth_RefreshController : ControllerBase
                     reader["expires_at"]
                 );
 
-            bool revoked =
+            bool used =
                 Convert.ToBoolean(
-                    reader["revoked"]
+                    reader["used"]
                 );
 
-            string email =
-                reader["email"].ToString()!;
-
-            string username =
-                reader["username"].ToString()!;
-
-            string role =
-                reader["role"].ToString()!;
+            await reader.CloseAsync();
 
             // =========================
             // VALIDATION
             // =========================
 
-            if (revoked)
+            if (used)
             {
-                return Unauthorized(new
+                return BadRequest(new
                 {
                     message =
-                        "Refresh token revoked"
+                        "Token został już użyty"
                 });
             }
 
-            if (expiresAt < DateTime.UtcNow)
+            if (
+                expiresAt <
+                DateTime.UtcNow
+            )
             {
-                return Unauthorized(new
+                return BadRequest(new
                 {
                     message =
-                        "Refresh token expired"
+                        "Token wygasł"
                 });
             }
 
             // =========================
-            // REVOKE OLD TOKEN
+            // VERIFY USER
             // =========================
 
-            var revokeCmd =
+            var verifyUserCmd =
                 new NpgsqlCommand(
                     @"
-                    UPDATE refresh_tokens
-                    SET revoked = true
-                    WHERE token = @token
+                    UPDATE users
+                    SET is_email_verified = true
+                    WHERE id = @id
                     ",
                     conn
                 );
 
-            revokeCmd.Parameters.AddWithValue(
-                "token",
-                refreshToken
+            verifyUserCmd
+                .Parameters
+                .AddWithValue(
+                    "id",
+                    Guid.Parse(userId)
+                );
+
+            await verifyUserCmd
+                .ExecuteNonQueryAsync();
+
+            // =========================
+            // MARK TOKEN USED
+            // =========================
+
+            var usedCmd =
+                new NpgsqlCommand(
+                    @"
+                    UPDATE
+                        email_verification_tokens
+                    SET
+                        used = true
+                    WHERE
+                        token = @token
+                    ",
+                    conn
+                );
+
+            usedCmd.Parameters
+                .AddWithValue(
+                    "token",
+                    token
+                );
+
+            await usedCmd
+                .ExecuteNonQueryAsync();
+
+            var userCmd = new NpgsqlCommand(
+                @"
+                SELECT
+                    email,
+                    username,
+                    role
+                FROM users
+                WHERE id = @id
+                ",
+                conn
             );
 
-            await reader.CloseAsync();
+            userCmd.Parameters.AddWithValue(
+                "id",
+                Guid.Parse(userId)
+            );
 
-            await revokeCmd.ExecuteNonQueryAsync();
+            await using var userReader =
+                await userCmd.ExecuteReaderAsync();
+
+            await userReader.ReadAsync();
+
+            string email =
+                userReader["email"].ToString()!;
+
+            string username =
+                userReader["username"].ToString()!;
+
+            string role =
+                userReader["role"].ToString()!;
+
+            await userReader.CloseAsync();
 
             // =========================
             // JWT CLAIMS
@@ -175,26 +217,26 @@ public class auth_RefreshController : ControllerBase
 
             var claims = new[]
             {
-                new Claim(
-                    ClaimTypes.NameIdentifier,
-                    userId
-                ),
+    new Claim(
+        ClaimTypes.NameIdentifier,
+        userId
+    ),
 
-                new Claim(
-                    ClaimTypes.Email,
-                    email
-                ),
+    new Claim(
+        ClaimTypes.Email,
+        email
+    ),
 
-                new Claim(
-                    ClaimTypes.Name,
-                    username
-                ),
+    new Claim(
+        "username",
+        username
+    ),
 
-                new Claim(
-                    ClaimTypes.Role,
-                    role
-                )
-            };
+    new Claim(
+        ClaimTypes.Role,
+        role
+    )
+};
 
             // =========================
             // JWT KEY
@@ -214,10 +256,10 @@ public class auth_RefreshController : ControllerBase
                 );
 
             // =========================
-            // NEW ACCESS TOKEN
+            // ACCESS TOKEN
             // =========================
 
-            var token =
+            var accessToken =
                 new JwtSecurityToken(
                     issuer:
                         _config["Jwt:Issuer"],
@@ -229,23 +271,51 @@ public class auth_RefreshController : ControllerBase
 
                     expires:
                         DateTime.UtcNow
-                            .AddHours(12),
+                            .AddMinutes(15),
 
                     signingCredentials: creds
                 );
 
             string jwt =
                 new JwtSecurityTokenHandler()
-                    .WriteToken(token);
+                    .WriteToken(accessToken);
 
             // =========================
-            // NEW REFRESH TOKEN
+            // ACCESS COOKIE
             // =========================
 
-            string newRefreshToken =
+            Response.Cookies.Append(
+                "accessToken",
+                jwt,
+                new CookieOptions
+                {
+                    HttpOnly = true,
+
+                    Secure = true,
+
+                    SameSite =
+                        SameSiteMode.None,
+
+                    Path = "/",
+
+                    Expires =
+                        DateTime.UtcNow
+                            .AddMinutes(15)
+                }
+            );
+
+            // =========================
+            // REFRESH TOKEN
+            // =========================
+
+            string refreshToken =
                 GenerateRefreshToken();
 
-            var insertRefreshCmd =
+            // =========================
+            // SAVE REFRESH TOKEN
+            // =========================
+
+            var refreshCmd =
                 new NpgsqlCommand(
                     @"
         INSERT INTO refresh_tokens
@@ -264,53 +334,30 @@ public class auth_RefreshController : ControllerBase
                     conn
                 );
 
-            insertRefreshCmd.Parameters.AddWithValue(
+            refreshCmd.Parameters.AddWithValue(
                 "user_id",
                 Guid.Parse(userId)
             );
 
-            insertRefreshCmd.Parameters.AddWithValue(
+            refreshCmd.Parameters.AddWithValue(
                 "token",
-                newRefreshToken
+                refreshToken
             );
 
-            insertRefreshCmd.Parameters.AddWithValue(
+            refreshCmd.Parameters.AddWithValue(
                 "expires_at",
                 DateTime.UtcNow.AddDays(30)
             );
 
-            await insertRefreshCmd
-                .ExecuteNonQueryAsync();
+            await refreshCmd.ExecuteNonQueryAsync();
 
             // =========================
-            // NEW ACCESS COOKIE
+            // REFRESH COOKIE
             // =========================
-
-                Response.Cookies.Append(
-                    "accessToken",
-                    jwt,
-                    new CookieOptions
-                    {
-                        HttpOnly = true,
-
-                        Secure = true,
-
-                        SameSite =
-                            SameSiteMode.None,
-
-                        Path = "/",
-
-                        Expires =
-                            DateTime.UtcNow
-                                .AddMinutes(15)
-                    }
-                );
-
-            // NOWY REFRESH COOKIE
 
             Response.Cookies.Append(
                 "refreshToken",
-                newRefreshToken,
+                refreshToken,
                 new CookieOptions
                 {
                     HttpOnly = true,
@@ -331,9 +378,13 @@ public class auth_RefreshController : ControllerBase
             return Ok(new
             {
                 message =
-                    "Access token odświeżony"
+                    "Email zweryfikowany",
+
+                redirect =
+                    "/dashboard"
             });
         }
+
         catch (Exception ex)
         {
             Console.WriteLine(ex);
@@ -348,11 +399,6 @@ public class auth_RefreshController : ControllerBase
             );
         }
     }
-
-    // =========================
-    // GENERATE REFRESH TOKEN
-    // =========================
-
     private string GenerateRefreshToken()
     {
         var randomBytes =
@@ -367,4 +413,5 @@ public class auth_RefreshController : ControllerBase
             randomBytes
         );
     }
+
 }

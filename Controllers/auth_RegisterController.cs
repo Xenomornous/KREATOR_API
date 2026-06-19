@@ -7,6 +7,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.RegularExpressions;
 using Kreator_API.Models;
+using Kreator_API.Services;
 
 namespace Kreator_API.Controllers
 { 
@@ -15,13 +16,18 @@ namespace Kreator_API.Controllers
 public class RegisterController : ControllerBase
 {
     private readonly IConfiguration _config;
+    private readonly EmailService _emailService;
 
-    public RegisterController(IConfiguration config)
-    {
-        _config = config;
-    }
+        public RegisterController(
+         IConfiguration config,
+         EmailService emailService
+        )
+        {
+            _config = config;
+            _emailService = emailService;
+        }
 
-    [HttpPost("register")]
+        [HttpPost("register")]
     public async Task<IActionResult> Register(
         [FromBody] auth_Register dto)
     {
@@ -255,95 +261,57 @@ public class RegisterController : ControllerBase
 
             var userId =
                 await insertCmd.ExecuteScalarAsync();
+                // =========================
+                // EMAIL VERIFICATION TOKEN
+                // =========================
 
-            // =========================
-            // JWT CLAIMS
-            // =========================
+                string verificationToken =
+                    GenerateVerificationToken();
 
-            var claims = new[]
-            {
-                new Claim(
-                    ClaimTypes.NameIdentifier,
-                    userId!.ToString()!
-                ),
+                var verifyCmd =
+                    new NpgsqlCommand(
+                        @"
+                            INSERT INTO
+                            email_verification_tokens
+                            (
+                                user_id,
+                                token,
+                                expires_at
+                            )
+                            VALUES
+                            (
+                                @user_id,
+                                @token,
+                                @expires_at
+                            )
+                            ",
+                        conn
+                    );
 
-                new Claim(
-                    ClaimTypes.Email,
-                    email
-                ),
-
-                new Claim(
-                    ClaimTypes.Role,
-                    "user"
-                )
-            };
-
-            // =========================
-            // JWT KEY
-            // =========================
-
-            var key =
-                new SymmetricSecurityKey(
-                    Encoding.UTF8.GetBytes(
-                        _config["Jwt:Key"]!
-                    )
+                verifyCmd.Parameters.AddWithValue(
+                    "user_id",
+                    Guid.Parse(userId!.ToString()!)
                 );
 
-            var creds =
-                new SigningCredentials(
-                    key,
-                    SecurityAlgorithms.HmacSha256
+                verifyCmd.Parameters.AddWithValue(
+                    "token",
+                    verificationToken
                 );
 
-            // =========================
-            // JWT TOKEN
-            // =========================
-
-            var token =
-                new JwtSecurityToken(
-                    issuer:
-                        _config["Jwt:Issuer"],
-
-                    audience:
-                        _config["Jwt:Audience"],
-
-                    claims: claims,
-
-                    expires:
-                        DateTime.UtcNow
-                            .AddMinutes(15),
-
-                    signingCredentials: creds
+                verifyCmd.Parameters.AddWithValue(
+                    "expires_at",
+                    DateTime.UtcNow.AddDays(1)
                 );
 
-            string jwt =
-                new JwtSecurityTokenHandler()
-                    .WriteToken(token);
+                await verifyCmd.ExecuteNonQueryAsync();
 
-            // =========================
-            // COOKIE
-            // =========================
+                // email
+                await _emailService
+                    .SendVerificationEmail(
+                        email,
+                        verificationToken
+                    );
 
-            Response.Cookies.Append(
-                "accessToken",
-                jwt,
-                new CookieOptions
-                {
-                    HttpOnly = true,
-
-                    // DEV:
-                    Secure = false,
-
-                    SameSite =
-                        SameSiteMode.Strict,
-
-                    Path = "/",
-
-                    Expires =
-                        DateTime.UtcNow
-                            .AddMinutes(15)
-                }
-            );
 
             // =========================
             // SUCCESS
@@ -352,7 +320,8 @@ public class RegisterController : ControllerBase
             return Ok(new
             {
                 message =
-                    "Rejestracja poprawna"
+                    "Konto utworzone. Sprawdź skrzynkę email aby zweryfikować konto.",
+
             });
         }
         catch (Exception ex)
@@ -369,5 +338,21 @@ public class RegisterController : ControllerBase
             );
         }
     }
-}
+        private string GenerateVerificationToken()
+        {
+            var randomBytes =
+                new byte[64];
+
+            using var rng =
+                System.Security.Cryptography
+                    .RandomNumberGenerator
+                    .Create();
+
+            rng.GetBytes(randomBytes);
+
+            return Convert.ToHexString(
+                randomBytes
+            );
+        }
+    }
 }
